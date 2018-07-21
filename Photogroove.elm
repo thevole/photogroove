@@ -1,12 +1,12 @@
 port module PhotoGroove exposing (..)
 
 import Html exposing (..)
-import Html.Attributes as Attrs exposing (id, class, classList, type_, title, src, max, name)
+import Html.Attributes as Attrs exposing (id, checked, class, classList, type_, title, src, max, name)
 import Html.Events exposing (on, onClick)
 import Array exposing (Array)
 import Random
 import Http
-import Json.Decode exposing (string, int, list, Decoder, at)
+import Json.Decode exposing (Value, float, string, int, list, Decoder, at)
 import Json.Decode.Pipeline exposing (decode, optional, required)
 
 
@@ -25,7 +25,7 @@ type alias Model =
 port setFilters : FilterOptions -> Cmd msg
 
 
-port statusChanges : (String -> msg) -> Sub msg
+port statusChanges : (Value -> msg) -> Sub msg
 
 
 type alias FilterOptions =
@@ -59,6 +59,7 @@ type Msg
     | SetRipple Int
     | SetNoise Int
     | SetStatus String
+    | SetError String
 
 
 type ThumbnailSize
@@ -91,7 +92,7 @@ view model =
         [ h1 [] [ text "Photo Groove" ]
         , h3 [] [ text "Thumbnail Size:" ]
         , div [ id "choose-size" ]
-            (List.map viewSizeChooser [ Small, Medium, Large ])
+            (List.map (viewSizeChooser model) [ Small, Medium, Large ])
         , div [ id "thumbnails", class (sizeToString model.chosenSize) ]
             (List.map (viewThumbnail model.selectedUrl) model.photos)
         , button
@@ -131,12 +132,20 @@ viewThumbnail selectedUrl thumbnail =
         []
 
 
-viewSizeChooser : ThumbnailSize -> Html Msg
-viewSizeChooser size =
-    label []
-        [ input [ type_ "radio", name "size", onClick (SetSize size) ] []
-        , text (sizeToString size)
-        ]
+viewSizeChooser : Model -> ThumbnailSize -> Html Msg
+viewSizeChooser model size =
+    let
+        isChecked : Bool
+        isChecked =
+            if size == model.chosenSize then
+                True
+            else
+                False
+    in
+        label []
+            [ input [ type_ "radio", checked isChecked, name "size", onClick (SetSize size) ] []
+            , text (sizeToString size)
+            ]
 
 
 sizeToString : ThumbnailSize -> String
@@ -170,6 +179,11 @@ update msg model =
     case msg of
         SetStatus status ->
             ( { model | status = status }
+            , Cmd.none
+            )
+
+        SetError error ->
+            ( { model | status = error }
             , Cmd.none
             )
 
@@ -252,25 +266,46 @@ initialCmd =
         |> Http.send LoadPhotos
 
 
-init : Float -> ( Model, Cmd Msg )
+init : Value -> ( Model, Cmd Msg )
 init flags =
     let
+        status : String
         status =
-            "Initializing Pasta v" ++ toString flags
+            case Json.Decode.decodeValue float flags of
+                Ok version ->
+                    "Initializing Pasta v" ++ toString version
+
+                Err _ ->
+                    "Initialization error"
     in
         ( { initialModel | status = status }
         , initialCmd
         )
 
 
-main : Program Float Model Msg
+main : Program Value Model Msg
 main =
     Html.programWithFlags
         { init = init
         , view = viewOrError
         , update = update
-        , subscriptions = \_ -> statusChanges SetStatus
+        , subscriptions = subscriptions
         }
+
+
+processStatus : Value -> Msg
+processStatus value =
+    case Json.Decode.decodeValue string value of
+        Ok status ->
+            SetStatus status
+
+        Err error ->
+            SetError error
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    statusChanges processStatus
 
 
 paperSlider : List (Attribute msg) -> List (Html msg) -> Html msg
